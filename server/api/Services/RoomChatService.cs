@@ -11,8 +11,6 @@ namespace api.Services;
 
 public sealed class RoomChatService : IRoomChatService
 {
-    private const string FakeSenderUsername = "demo-user";
-    
     private readonly MyDbContext _db;
     private readonly ISseBackplane _bp;
 
@@ -24,7 +22,6 @@ public sealed class RoomChatService : IRoomChatService
 
     public async Task<List<MessageDto>> GetLastMessagesAsync(string roomName, int take)
     {
-        // learn what this clamp thing is doing
         take = Math.Clamp(take, 1, 50);
 
         var room = await _db.Rooms
@@ -62,22 +59,25 @@ public sealed class RoomChatService : IRoomChatService
         )).ToList();
     }
 
-    public async Task<MessageDto> PostPublicMessageAsync(string roomName, string content)
+    public async Task<MessageDto> PostPublicMessageAsync(string roomName, Guid senderUserId, string content)
     {
-        
         roomName = RoomName.Normalize(roomName);
-        
-        content = content.Trim();
+
+        content = content?.Trim() ?? "";
         if (string.IsNullOrWhiteSpace(content))
             throw new ArgumentException("Content is required.", nameof(content));
 
+        // ✅ Load the real authenticated user
+        var sender = await _db.AppUsers.FirstOrDefaultAsync(u => u.Id == senderUserId);
+        if (sender is null || sender.IsActive == false)
+            throw new UnauthorizedAccessException("User not found or inactive.");
+
         var room = await GetOrCreateRoomAsync(roomName);
-        var sender = await GetOrCreateFakeSenderAsync();
 
         var msg = new Message
         {
             RoomId = room.Id,
-            SenderUserId = sender.Id,
+            SenderUserId = sender.Id,          // ✅ real sender
             Type = MessageType.Public,
             Content = content,
             RecipientUserId = null,
@@ -97,7 +97,6 @@ public sealed class RoomChatService : IRoomChatService
             SentAt: msg.SentAt
         );
 
-        // ✅ Broadcast to everyone listening on this room
         await _bp.Clients.SendToGroupAsync($"room:{roomName}", dto);
         return dto;
     }
@@ -118,24 +117,64 @@ public sealed class RoomChatService : IRoomChatService
         await _db.SaveChangesAsync();
         return room;
     }
-
-    private async Task<AppUser> GetOrCreateFakeSenderAsync()
-    {
-        var user = await _db.AppUsers.FirstOrDefaultAsync(u => u.Username == FakeSenderUsername);
-        if (user is not null) return user;
-
-        user = new AppUser
-        {
-            Username = FakeSenderUsername,
-            PasswordHash = "dev-only",
-            CreatedAt = DateTime.UtcNow,
-            UpdatedAt = DateTime.UtcNow,
-            IsActive = true
-        };
-
-        _db.AppUsers.Add(user);
-        await _db.SaveChangesAsync();
-        return user;
-    }
     
+    public async Task<MessageDto> PostDmAsync(string roomName, Guid senderUserId, Guid recipientUserId, string content)
+{
+    roomName = RoomName.Normalize(roomName);
+
+    content = content?.Trim() ?? "";
+    if (string.IsNullOrWhiteSpace(content))
+        throw new ArgumentException("Content is required.", nameof(content));
+
+    if (senderUserId == recipientUserId)
+        throw new ArgumentException("You cannot DM yourself.");
+
+    var sender = await _db.AppUsers.FirstOrDefaultAsync(u => u.Id == senderUserId);
+    if (sender is null || !sender.IsActive)
+        throw new UnauthorizedAccessException("Sender not found or inactive.");
+
+    var recipient = await _db.AppUsers.FirstOrDefaultAsync(u => u.Id == recipientUserId);
+    if (recipient is null || !recipient.IsActive)
+        throw new ArgumentException("Recipient not found or inactive.");
+
+    // ✅ extra safety: enforce admin in DB too (not only token)
+    var isAdmin = await _db.UserRoles
+        .AnyAsync(ur => ur.UserId == senderUserId && ur.Role.Name == "Admin");
+
+    if (!isAdmin)
+        throw new UnauthorizedAccessException("Only Admin can send DMs.");
+
+    var room = await GetOrCreateRoomAsync(roomName);
+
+    var msg = new Message
+    {
+        RoomId = room.Id,
+        SenderUserId = sender.Id,
+        Type = MessageType.Dm,
+        Content = content,
+        RecipientUserId = recipient.Id,
+        SentAt = DateTime.UtcNow
+    };
+
+    _db.Messages.Add(msg);
+    await _db.SaveChangesAsync();
+
+    var dto = new MessageDto(
+        Id: msg.Id,
+        Room: roomName,
+        SenderUsername: sender.Username,
+        Type: "dm",
+        Content: msg.Content,
+        RecipientUserId: msg.RecipientUserId,
+        SentAt: msg.SentAt
+    );
+
+    // 🚫 DO NOT send DM to room group (that leaks it to everyone)
+    // ✅ Send DM to sender + recipient user channels/groups:
+    await _bp.Clients.SendToGroupAsync($"user:{sender.Id}", dto);
+    await _bp.Clients.SendToGroupAsync($"user:{recipient.Id}", dto);
+
+    return dto;
+}
+
 }

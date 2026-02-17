@@ -25,3 +25,10 @@ dotnet ef database update --project ./dataaccess --startup-project ./api
 After you’re done, you can unset it:
 
 unset ASPNETCORE_ENVIRONMENT
+
+user: ali
+password: test
+
+user: admin
+password: admin
+Role: Admin
