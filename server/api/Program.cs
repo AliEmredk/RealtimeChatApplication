@@ -1,11 +1,18 @@
+using api.Services;
 using dataaccess;
 using Microsoft.EntityFrameworkCore;
 using StateleSSE.AspNetCore;
 using StateleSSE.AspNetCore.Extensions;
+using dataaccess.Entities;
+using Npgsql;
+using Npgsql.NameTranslation;
 
 DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
+
+builder.Services.AddScoped<IRoomChatService, RoomChatService>();
+
 
 var redisConn =
     Environment.GetEnvironmentVariable("REDIS_CONNECTION")
@@ -18,20 +25,16 @@ builder.Services.AddRedisSseBackplane(conf =>
 
 builder.Services.AddEfRealtime();
 
+var cs = builder.Configuration.GetConnectionString("Db")!;
 
 builder.Services.AddDbContext<MyDbContext>((sp, opt) =>
 {
-    opt.UseNpgsql(builder.Configuration.GetConnectionString("Db"));
+    opt.UseNpgsql(cs);
     opt.UseSnakeCaseNamingConvention();
 
-    // Skip interceptor during migrations/design-time
     if (!builder.Environment.IsEnvironment("Migration"))
-    {
         opt.AddEfRealtimeInterceptor(sp);
-    }
 });
-
-
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();

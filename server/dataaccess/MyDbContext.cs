@@ -20,7 +20,6 @@ public class MyDbContext : DbContext
     {
           // Postgres extension + enum (if you want Postgres enum type)
     modelBuilder.HasPostgresExtension("pgcrypto");
-    modelBuilder.HasPostgresEnum<MessageType>(schema: "public", name: "message_type");
 
     // --------------------
     // app_users
@@ -138,7 +137,15 @@ public class MyDbContext : DbContext
 
         // enum stored as Postgres enum (message_type)
         e.Property(x => x.Type)
-            .HasColumnType("message_type");
+            .HasConversion(
+                v => v == MessageType.Dm ? "dm" : "public",
+                v => v == "dm" ? MessageType.Dm : MessageType.Public
+            )
+            .HasColumnType("text");
+
+
+
+
 
         e.Property(x => x.Content)
             .IsRequired();
@@ -159,7 +166,9 @@ public class MyDbContext : DbContext
             .WithMany() // you can add a collection later if you want
             .HasForeignKey(x => x.RecipientUserId)
             .OnDelete(DeleteBehavior.Restrict);
-
+        
+        e.HasCheckConstraint("messages_type_valid", "type IN ('public', 'dm')");
+        
         // DM constraint: dm => recipient_user_id not null, public => recipient_user_id null
         e.HasCheckConstraint(
             "dm_requires_recipient",
