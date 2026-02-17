@@ -1,3 +1,4 @@
+using dataaccess;
 using Microsoft.EntityFrameworkCore;
 using StateleSSE.AspNetCore;
 using StateleSSE.AspNetCore.Extensions;
@@ -15,13 +16,22 @@ builder.Services.AddRedisSseBackplane(conf =>
     conf.RedisConnectionString = redisConn;
 });
 
-// keep EF realtime as you have it
 builder.Services.AddEfRealtime();
-builder.Services.AddDbContext<AppDb>((sp, opt) =>
+
+
+builder.Services.AddDbContext<MyDbContext>((sp, opt) =>
 {
-    opt.UseInMemoryDatabase("quickstart");
-    opt.AddEfRealtimeInterceptor(sp);
+    opt.UseNpgsql(builder.Configuration.GetConnectionString("Db"));
+    opt.UseSnakeCaseNamingConvention();
+
+    // Skip interceptor during migrations/design-time
+    if (!builder.Environment.IsEnvironment("Migration"))
+    {
+        opt.AddEfRealtimeInterceptor(sp);
+    }
 });
+
+
 
 builder.Services.AddControllers();
 builder.Services.AddEndpointsApiExplorer();
