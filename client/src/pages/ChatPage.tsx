@@ -19,7 +19,6 @@ function getRolesFromJwt(token: string): string[] {
     const payload = parseJwt(token);
     if (!payload) return [];
 
-    // common claim names
     const role =
         payload["role"] ??
         payload["roles"] ??
@@ -44,6 +43,7 @@ export default function ChatPage() {
 
     const [dmMode, setDmMode] = useState(false);
     const [dmRecipientId, setDmRecipientId] = useState("");
+    const [participants, setParticipants] = useState<{ id: string; username: string }[]>([]);
 
     const [online, setOnline] = useState<number>(0);
 
@@ -52,7 +52,24 @@ export default function ChatPage() {
         return getRolesFromJwt(token).includes("Admin");
     }, [token]);
 
+    const visibleMessages = token
+        ? messages
+        : messages.filter((m) => m.type !== "dm");
+
+
     const baseUrl = import.meta.env.VITE_API_URL ?? "http://localhost:5000";
+
+    function getUserIdFromJwt(tokenStr: string): string | null {
+        const payload = parseJwt(tokenStr);
+        if (!payload) return null;
+
+        return (
+            payload["sub"] ??
+            payload["nameid"] ??
+            payload["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] ??
+            null
+        );
+    }
 
     async function reloadRooms() {
         try {
@@ -91,11 +108,11 @@ export default function ChatPage() {
         };
     }, [room]);
 
-    // SSE: live updates for this room (public)
+    // SSE: live updates for this room + (if logged in) user DMs
     useEffect(() => {
         const roomName = room.trim();
-        const eventName = `room:${roomName}`;
 
+        // ✅ compute once
         const userId = token ? getUserIdFromJwt(token) : null;
 
         // if logged in -> listen-auth, else -> listen
@@ -124,18 +141,24 @@ export default function ChatPage() {
             });
         };
 
-        // room messages come as named events
-        es.addEventListener(eventName, handler as EventListener);
+        // ✅ listen to BOTH event channels
+        es.addEventListener(`room:${roomName}`, handler as EventListener);
 
-        // DMs might arrive as default event (depends on backplane implementation)
-        es.onmessage = handler;
+        if (userId) {
+            es.addEventListener(`user:${userId}`, handler as EventListener);
+        }
 
         return () => {
-            es.removeEventListener(eventName, handler as EventListener);
+            // ✅ cleanup BOTH
+            es.removeEventListener(`room:${roomName}`, handler as EventListener);
+
+            if (userId) {
+                es.removeEventListener(`user:${userId}`, handler as EventListener);
+            }
+
             es.close();
         };
     }, [room, baseUrl, token]);
-
 
     useEffect(() => {
         let cancelled = false;
@@ -159,17 +182,29 @@ export default function ChatPage() {
         };
     }, [room, baseUrl]);
 
-    function getUserIdFromJwt(token: string): string | null {
-        const payload = parseJwt(token);
-        if (!payload) return null;
+    useEffect(() => {
+        if (!token || !isAdmin) return;
 
-        return (
-            payload["sub"] ??
-            payload["nameid"] ??
-            payload["http://schemas.xmlsoap.org/ws/2005/05/identity/claims/nameidentifier"] ??
-            null
-        );
-    }
+        let cancelled = false;
+
+        async function loadParticipants() {
+            try {
+                const res = await fetch(`${baseUrl}/rooms/${encodeURIComponent(room.trim())}/participants`, {
+                    headers: { Authorization: `Bearer ${token}` },
+                });
+                if (!res.ok) return;
+                const data = await res.json();
+                if (!cancelled && Array.isArray(data)) setParticipants(data);
+            } catch {
+                // ignore
+            }
+        }
+
+        loadParticipants();
+        return () => {
+            cancelled = true;
+        };
+    }, [room, token, isAdmin, baseUrl]);
 
     async function send() {
         setError(null);
@@ -209,7 +244,6 @@ export default function ChatPage() {
 
             setText("");
 
-            // optimistic append, dedupe by id
             setMessages((prev) => {
                 if (dto?.id && prev.some((m) => m.id === dto.id)) return prev;
                 return [...prev, dto];
@@ -218,7 +252,6 @@ export default function ChatPage() {
             setError(e?.message ?? "Failed to send message");
         }
     }
-
 
     async function createRoom() {
         setError(null);
@@ -254,7 +287,7 @@ export default function ChatPage() {
 
             setNewRoomName("");
             await reloadRooms();
-            setRoom(name); // jump to new room
+            setRoom(name);
         } catch (e: any) {
             setError(e?.message ?? "Failed to create room");
         } finally {
@@ -297,7 +330,6 @@ export default function ChatPage() {
 
             await reloadRooms();
 
-            // if you archived the current room, move to first available or fallback
             setRoom((prev) => {
                 if (prev !== name) return prev;
                 const next = rooms.filter((r) => r !== name)[0];
@@ -415,10 +447,7 @@ export default function ChatPage() {
                 {token ? (isAdmin ? "(admin)" : "(can write)") : "(read-only, login to write)"}
               </span>
 
-                          
-                            <span style={{ marginLeft: "auto", opacity: 0.7, fontSize: 14 }}>
-    Online: {online}
-  </span>
+                            <span style={{ marginLeft: "auto", opacity: 0.7, fontSize: 14 }}>Online: {online}</span>
                         </div>
 
                         {error && <p style={{ color: "crimson" }}>{error}</p>}
@@ -435,50 +464,60 @@ export default function ChatPage() {
                                 overflowY: "auto",
                             }}
                         >
-                            {messages.length === 0 ? (
+                            {visibleMessages.length === 0 ? (
                                 <p style={{ opacity: 0.7 }}>No messages yet.</p>
                             ) : (
-                                messages.map((m) => (
+                                visibleMessages.map((m) => (
                                     <div key={m.id} style={{ padding: "8px 0", borderBottom: "1px solid #2a2a2a" }}>
                                         <b>{m.senderUsername}</b>: {m.content}
                                         {m.type === "dm" && (
-                                            <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>
-        (DM)
-      </span>
+                                            <span style={{ marginLeft: 8, fontSize: 12, opacity: 0.8 }}>(DM)</span>
                                         )}
                                         <div style={{ opacity: 0.6, fontSize: 12 }}>
                                             {m.type} {m.sentAt ? new Date(m.sentAt as any).toLocaleString() : ""}
                                         </div>
                                     </div>
                                 ))
-
                             )}
                         </div>
 
-                        /* DM controls (Admin only) */
+                        {/* DM controls (Admin only) */}
                         {token && isAdmin && (
-                            <div style={{ display: "flex", gap: 8, marginTop: 10, alignItems: "center" }}>
-                                <label style={{ fontSize: 12, opacity: 0.8 }}>
-                                    <input
-                                        type="checkbox"
-                                        checked={dmMode}
-                                        onChange={(e) => setDmMode(e.target.checked)}
-                                        style={{ marginRight: 6 }}
-                                    />
-                                    DM mode
-                                </label>
+                            <div style={{ marginTop: 10, padding: 10, border: "1px solid #2a2a2a", borderRadius: 10 }}>
+                                <div style={{ fontSize: 12, opacity: 0.8, marginBottom: 6 }}>DM (Admin)</div>
 
-                                {dmMode && (
-                                    <input
-                                        value={dmRecipientId}
-                                        onChange={(e) => setDmRecipientId(e.target.value)}
-                                        placeholder="recipient userId (GUID)"
-                                        style={{ flex: 1, padding: 8, borderRadius: 8 }}
-                                    />
-                                )}
+                                <div style={{ display: "flex", gap: 10, alignItems: "center" }}>
+                                    <label style={{ fontSize: 12, opacity: 0.85 }}>
+                                        <input
+                                            type="checkbox"
+                                            checked={dmMode}
+                                            onChange={(e) => {
+                                                setDmMode(e.target.checked);
+                                                if (!e.target.checked) setDmRecipientId("");
+                                            }}
+                                            style={{ marginRight: 6 }}
+                                        />
+                                        DM mode
+                                    </label>
+
+                                    {dmMode && (
+                                        <select
+                                            value={dmRecipientId}
+                                            onChange={(e) => setDmRecipientId(e.target.value)}
+                                            style={{ flex: 1, padding: 8, borderRadius: 8 }}
+                                        >
+                                            <option value="">Select recipient…</option>
+                                            {participants.map((u) => (
+                                                <option key={u.id} value={u.id}>
+                                                    {u.username}
+                                                </option>
+                                            ))}
+                                        </select>
+                                    )}
+                                </div>
                             </div>
                         )}
-                        
+
                         {/* Send message */}
                         <div style={{ marginTop: 12, display: "flex", gap: 8 }}>
                             <input

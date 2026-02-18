@@ -93,14 +93,12 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
         {
             OnMessageReceived = ctx =>
             {
-                // For SSE/EventSource: allow ?access_token=...
-                var token = ctx.Request.Query["access_token"].ToString();
+                var accessToken = ctx.Request.Query["access_token"].ToString();
                 var path = ctx.HttpContext.Request.Path;
 
-                if (!string.IsNullOrEmpty(token) &&
-                    path.StartsWithSegments("/rooms"))
+                if (!string.IsNullOrEmpty(accessToken) && path.StartsWithSegments("/rooms"))
                 {
-                    ctx.Token = token;
+                    ctx.Token = accessToken;
                 }
 
                 return Task.CompletedTask;

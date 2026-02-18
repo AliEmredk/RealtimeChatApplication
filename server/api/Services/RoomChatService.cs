@@ -20,9 +20,13 @@ public sealed class RoomChatService : IRoomChatService
         _bp = bp;
     }
 
-    public async Task<List<MessageDto>> GetLastMessagesAsync(string roomName, int take)
+    public async Task<List<MessageDto>> GetLastMessagesAsync(
+        string roomName,
+        int take,
+        Guid? currentUserId)
     {
         take = Math.Clamp(take, 1, 50);
+        roomName = RoomName.Normalize(roomName);
 
         var room = await _db.Rooms
             .AsNoTracking()
@@ -32,7 +36,18 @@ public sealed class RoomChatService : IRoomChatService
 
         var msgs = await _db.Messages
             .AsNoTracking()
-            .Where(m => m.RoomId == room.Id)
+            .Where(m =>
+                m.RoomId == room.Id &&
+                (
+                    m.Type == MessageType.Public ||
+
+                    // if DM → only sender or recipient can see it
+                    (m.Type == MessageType.Dm &&
+                     currentUserId != null &&
+                     (m.SenderUserId == currentUserId ||
+                      m.RecipientUserId == currentUserId))
+                )
+            )
             .OrderByDescending(m => m.SentAt)
             .Take(take)
             .Select(m => new
@@ -58,6 +73,7 @@ public sealed class RoomChatService : IRoomChatService
             SentAt: m.SentAt
         )).ToList();
     }
+
 
     public async Task<MessageDto> PostPublicMessageAsync(string roomName, Guid senderUserId, string content)
     {
@@ -233,4 +249,26 @@ public sealed class RoomChatService : IRoomChatService
         var members = await _bp.Groups.GetMembersAsync($"room:{roomName}");
         return members.Count;
     }
+    
+    public async Task<List<UserMiniDto>> GetRoomParticipantsAsync(string roomName, int take = 50)
+    {
+        roomName = RoomName.Normalize(roomName);
+        take = Math.Clamp(take, 1, 200);
+
+        var room = await _db.Rooms.AsNoTracking().FirstOrDefaultAsync(r => r.Name == roomName);
+        if (room is null) return new();
+
+        // users who have sent messages in this room
+        var users = await _db.Messages
+            .AsNoTracking()
+            .Where(m => m.RoomId == room.Id && m.SenderUserId != null)
+            .Select(m => new { m.SenderUserId, m.SenderUser.Username })
+            .Distinct()
+            .OrderBy(x => x.Username)
+            .Take(take)
+            .ToListAsync();
+
+        return users.Select(x => new UserMiniDto(x.SenderUserId, x.Username)).ToList();
+    }
+
 }

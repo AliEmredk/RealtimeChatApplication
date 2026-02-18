@@ -23,11 +23,28 @@ public class RoomsController : ControllerBase
     public RoomsController(IRoomChatService svc) => _svc = svc;
 
     [HttpGet("{roomName}/messages")]
-    public async Task<ActionResult<List<MessageDto>>> GetMessages(string roomName, int take = 5)
+    public async Task<ActionResult<List<MessageDto>>> GetMessages(
+        string roomName,
+        int take = 5)
     {
         roomName = RoomName.Normalize(roomName);
-        return Ok(await _svc.GetLastMessagesAsync(roomName, take));
+
+        Guid? userId = null;
+
+        if (User.Identity?.IsAuthenticated == true)
+        {
+            var userIdStr =
+                User.FindFirstValue(ClaimTypes.NameIdentifier)
+                ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub);
+
+            if (Guid.TryParse(userIdStr, out var parsed))
+                userId = parsed;
+        }
+
+        return Ok(await _svc.GetLastMessagesAsync(roomName, take, userId));
     }
+
+
     
     [HttpGet]
     public async Task<ActionResult<List<string>>> GetRooms([FromServices] MyDbContext db)
@@ -161,5 +178,13 @@ public class RoomsController : ControllerBase
         roomName = RoomName.Normalize(roomName);
         var count = await _svc.GetOnlineCountAsync(roomName);
         return Ok(new { room = roomName, online = count });
+    }
+    
+    [Authorize(Roles = "Admin")]
+    [HttpGet("{roomName}/participants")]
+    public async Task<ActionResult<List<UserMiniDto>>> GetParticipants(string roomName, int take = 50)
+    {
+        roomName = RoomName.Normalize(roomName);
+        return Ok(await _svc.GetRoomParticipantsAsync(roomName, take));
     }
 }
