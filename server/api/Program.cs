@@ -27,7 +27,8 @@ builder.Services.AddCors(opt =>
     opt.AddPolicy("dev", p =>
             p.WithOrigins(
                     "http://localhost:5173", // Vite default
-                    "http://localhost:3000"  // CRA default 
+                    "http://localhost:3000",  // CRA default 
+                    "https://frontend-chatappada.fly.dev"
                 )
                 .AllowAnyHeader()
                 .AllowAnyMethod()
