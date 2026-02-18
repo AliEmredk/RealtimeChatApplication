@@ -7,6 +7,7 @@ using StateleSSE.AspNetCore;
 using StateleSSE.AspNetCore.Extensions;
 using api.Helpers;
 using System.Security.Claims;
+using dataaccess;
 using Microsoft.AspNetCore.Authorization;
 
 namespace api.Controllers;
@@ -23,19 +24,41 @@ public class RoomsController : ControllerBase
 
     [HttpGet("{roomName}/messages")]
     public async Task<ActionResult<List<MessageDto>>> GetMessages(string roomName, int take = 5)
-        => Ok(await _svc.GetLastMessagesAsync(roomName, take));
+    {
+        roomName = RoomName.Normalize(roomName);
+        return Ok(await _svc.GetLastMessagesAsync(roomName, take));
+    }
+    
+    [HttpGet]
+    public async Task<ActionResult<List<string>>> GetRooms([FromServices] MyDbContext db)
+    {
+        var rooms = await db.Rooms
+            .AsNoTracking()
+            .Where(r => !r.IsArchived)   //only active rooms
+            .OrderBy(r => r.Name)
+            .Select(r => r.Name)
+            .ToListAsync();
+
+        return Ok(rooms);
+    }
+
 
     [Authorize]
     [HttpPost("{roomName}/messages")]
-    public async Task<ActionResult<MessageDto>> PostMessage(string roomName, [FromBody] CreateMessageRequest req)
+    public async Task<ActionResult<MessageDto>> PostMessage(
+        string roomName,
+        [FromBody] CreateMessageRequest req,
+        [FromServices] ISseBackplane bp,
+        CancellationToken ct)
     {
+        roomName = RoomName.Normalize(roomName);
+
         if (req is null || string.IsNullOrWhiteSpace(req.Content))
             return BadRequest("Content is required");
 
-        // 1) Get userId from token claims
         var userIdStr =
-            User.FindFirstValue(ClaimTypes.NameIdentifier)   // if you add this claim (recommended)
-            ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub); // your current "sub"
+            User.FindFirstValue(ClaimTypes.NameIdentifier)
+            ?? User.FindFirstValue(JwtRegisteredClaimNames.Sub);
 
         if (string.IsNullOrWhiteSpace(userIdStr))
             return Unauthorized("Missing user id claim.");
@@ -43,21 +66,14 @@ public class RoomsController : ControllerBase
         if (!Guid.TryParse(userIdStr, out var userId))
             return Unauthorized("Invalid user id claim.");
 
-        try
-        {
-            // 2) Pass userId into service (no more fake sender!)
-            var dto = await _svc.PostPublicMessageAsync(roomName, userId, req.Content);
-            return Created($"/rooms/{roomName}/messages?take=1", dto);
-        }
-        catch (ArgumentException ex)
-        {
-            return BadRequest(ex.Message);
-        }
-        catch (UnauthorizedAccessException ex)
-        {
-            return Unauthorized(ex.Message);
-        }
+        var dto = await _svc.PostPublicMessageAsync(roomName, userId, req.Content);
+        
+        
+        await bp.Clients.SendToGroupAsync($"room:{roomName}", dto);
+
+        return Ok(dto);
     }
+
 
     [HttpGet("{roomName}/listen")]
     public Task Listen(string roomName, CancellationToken ct, [FromServices] ISseBackplane bp)
@@ -82,7 +98,7 @@ public class RoomsController : ControllerBase
         try
         {
             var dto = await _svc.PostDmAsync(roomName, senderId, req.RecipientUserId, req.Content);
-            return Created($"/rooms/{roomName}/messages?take=1", dto);
+            return Ok(dto);
         }
         catch (ArgumentException ex) { return BadRequest(ex.Message); }
         catch (UnauthorizedAccessException ex) { return Unauthorized(ex.Message); }
@@ -103,6 +119,47 @@ public class RoomsController : ControllerBase
         var groups = new[] { $"room:{roomName}", $"user:{userIdStr}" };
         return HttpContext.StreamSseAsync(bp, groups, ct);
     }
- 
+    
+    [Authorize(Roles = "Admin")]
+    [HttpPost]
+    public async Task<ActionResult<CreateRoomResponse>> CreateRoom([FromBody] CreateRoomRequest req)
+    {
+        if (req is null || string.IsNullOrWhiteSpace(req.Name))
+            return BadRequest("Name is required.");
 
+        try
+        {
+            var createdName = await _svc.CreateRoomAsync(req.Name);
+            return Ok(new CreateRoomResponse(createdName));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+
+    [Authorize(Roles = "Admin")]
+    [HttpPost("{roomName}/archive")]
+    public async Task<ActionResult<ArchiveRoomResponse>> ArchiveRoom(string roomName)
+    {
+        roomName = RoomName.Normalize(roomName);
+
+        try
+        {
+            var name = await _svc.ArchiveRoomAsync(roomName);
+            return Ok(new ArchiveRoomResponse(name, true));
+        }
+        catch (ArgumentException ex)
+        {
+            return BadRequest(ex.Message);
+        }
+    }
+    
+    [HttpGet("{roomName}/online")]
+    public async Task<ActionResult<object>> GetOnline(string roomName)
+    {
+        roomName = RoomName.Normalize(roomName);
+        var count = await _svc.GetOnlineCountAsync(roomName);
+        return Ok(new { room = roomName, online = count });
+    }
 }

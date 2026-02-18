@@ -7,7 +7,10 @@
       "launchBrowser": true,
       "applicationUrl": "http://localhost:5000",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "JWT_KEY": "DEV_ONLY_CHANGE_ME_very_long_random_key_1234567890",
+        "JWT_ISSUER": "newStartSSE",
+        "JWT_AUDIENCE": "newStartSSE"
       }
     },
     "https": {
@@ -16,7 +19,10 @@
       "launchBrowser": true,
       "applicationUrl": "https://localhost:7012;http://localhost:5139",
       "environmentVariables": {
-        "ASPNETCORE_ENVIRONMENT": "Development"
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "JWT_KEY": "DEV_ONLY_CHANGE_ME_very_long_random_key_1234567890",
+        "JWT_ISSUER": "newStartSSE",
+        "JWT_AUDIENCE": "newStartSSE"
       }
     }
   }

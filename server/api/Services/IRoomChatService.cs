@@ -9,4 +9,10 @@ public interface IRoomChatService
     
     Task<MessageDto> PostDmAsync(string roomName, Guid senderUserId, Guid recipientUserId, string content);
 
+    Task<string> CreateRoomAsync(string roomName);
+    
+    Task<string> ArchiveRoomAsync(string roomName);
+    
+    Task<int> GetOnlineCountAsync(string roomName);
+
 }

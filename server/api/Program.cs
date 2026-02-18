@@ -17,19 +17,35 @@ DotNetEnv.Env.Load();
 
 var builder = WebApplication.CreateBuilder(args);
 
+
 builder.Services.AddScoped<IRoomChatService, RoomChatService>();
 builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
+
+builder.Services.AddCors(opt =>
+{
+    opt.AddPolicy("dev", p =>
+            p.WithOrigins(
+                    "http://localhost:5173", // Vite default
+                    "http://localhost:3000"  // CRA default 
+                )
+                .AllowAnyHeader()
+                .AllowAnyMethod()
+                .AllowCredentials() // needed for cookies OR SSE with credentials
+    );
+});
 
 
 var redisConn =
     Environment.GetEnvironmentVariable("REDIS_CONNECTION")
     ?? "127.0.0.1:6379,abortConnect=false"; // fallback to local docker redis
 
+
 builder.Services.AddRedisSseBackplane(conf =>
 {
     conf.RedisConnectionString = redisConn;
-});
+}); 
+
 
 builder.Services.AddEfRealtime();
 
@@ -71,6 +87,24 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
             
             RoleClaimType = ClaimTypes.Role,
             NameClaimType = ClaimTypes.NameIdentifier
+        };
+        
+        opt.Events = new JwtBearerEvents
+        {
+            OnMessageReceived = ctx =>
+            {
+                // For SSE/EventSource: allow ?access_token=...
+                var token = ctx.Request.Query["access_token"].ToString();
+                var path = ctx.HttpContext.Request.Path;
+
+                if (!string.IsNullOrEmpty(token) &&
+                    path.StartsWithSegments("/rooms"))
+                {
+                    ctx.Token = token;
+                }
+
+                return Task.CompletedTask;
+            }
         };
     });
 
@@ -137,6 +171,8 @@ backplane.OnClientDisconnected += async (_, e) =>
         }
     }
 };
+
+app.UseCors("dev");
 
 app.UseAuthentication();
 app.UseAuthorization();

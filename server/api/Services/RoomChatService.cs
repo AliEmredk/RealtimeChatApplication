@@ -97,7 +97,7 @@ public sealed class RoomChatService : IRoomChatService
             SentAt: msg.SentAt
         );
 
-        await _bp.Clients.SendToGroupAsync($"room:{roomName}", dto);
+        //await _bp.Clients.SendToGroupAsync($"room:{roomName}", dto);
         return dto;
     }
 
@@ -176,5 +176,61 @@ public sealed class RoomChatService : IRoomChatService
 
     return dto;
 }
+    
+    public async Task<string> CreateRoomAsync(string roomName)
+    {
+        roomName = RoomName.Normalize(roomName);
 
+        if (string.IsNullOrWhiteSpace(roomName))
+            throw new ArgumentException("Room name is required.");
+
+        if (roomName.Length > 50)
+            throw new ArgumentException("Room name is too long (max 50).");
+
+        var exists = await _db.Rooms.AnyAsync(r => r.Name == roomName);
+        if (exists)
+            throw new ArgumentException("Room already exists.");
+
+        var room = new Room
+        {
+            Name = roomName,
+            CreatedAt = DateTime.UtcNow,
+            IsArchived = false
+        };
+
+        _db.Rooms.Add(room);
+        await _db.SaveChangesAsync();
+
+        return roomName;
+    }
+
+    public async Task<string> ArchiveRoomAsync(string roomName)
+    {
+        roomName = RoomName.Normalize(roomName);
+
+        if (string.IsNullOrWhiteSpace(roomName))
+            throw new ArgumentException("Room name is required.");
+
+        var room = await _db.Rooms.FirstOrDefaultAsync(r => r.Name == roomName);
+
+        if (room is null)
+            throw new ArgumentException("Room not found.");
+
+        if (room.IsArchived)
+            return roomName; // already archived, idempotent
+
+        room.IsArchived = true;
+        await _db.SaveChangesAsync();
+
+        return roomName;
+    }
+    
+    public async Task<int> GetOnlineCountAsync(string roomName)
+    {
+        roomName = RoomName.Normalize(roomName);
+
+        // people "online" = number of SSE connections currently in this group
+        var members = await _bp.Groups.GetMembersAsync($"room:{roomName}");
+        return members.Count;
+    }
 }
