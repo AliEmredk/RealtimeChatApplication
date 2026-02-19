@@ -173,9 +173,6 @@ unset ASPNETCORE_ENVIRONMENT
 user: ali
 password: test
 
-user: admin
-password: admin
-Role: Admin
 
 I deployed this project
 frontend link:
