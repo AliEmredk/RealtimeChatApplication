@@ -18,8 +18,8 @@ DotNetEnv.Env.Load();
 var builder = WebApplication.CreateBuilder(args);
 
 
-builder.Services.AddScoped<IRoomChatService, RoomChatService>();
-builder.Services.AddScoped<IJwtTokenService, JwtTokenService>();
+builder.Services.AddScoped<IRoomChatService, RoomChatService>()
+    .AddScoped<IJwtTokenService, JwtTokenService>();
 builder.Services.AddScoped<IAuthService, AuthService>();
 
 builder.Services.AddCors(opt =>
@@ -170,6 +170,10 @@ backplane.OnClientDisconnected += async (_, e) =>
         }
     }
 };
+
+using (var scope = app.Services.CreateScope())
+    Console.WriteLine(scope.ServiceProvider.GetRequiredService<MyDbContext>().Database.GenerateCreateScript()
+);
 
 app.UseCors("dev");
 

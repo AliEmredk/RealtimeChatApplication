@@ -206,6 +206,12 @@ export default function ChatPage() {
         };
     }, [room, token, isAdmin, baseUrl]);
 
+    function onMessageKeyDown(e: React.KeyboardEvent<HTMLInputElement>) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            void send();
+        }
+    }
     async function send() {
         setError(null);
 
@@ -523,6 +529,7 @@ export default function ChatPage() {
                             <input
                                 value={text}
                                 onChange={(e) => setText(e.target.value)}
+                                onKeyDown={onMessageKeyDown}
                                 placeholder={token ? "Write a message..." : "Login to write"}
                                 disabled={!token}
                                 style={{ flex: 1, padding: 10, borderRadius: 8 }}
