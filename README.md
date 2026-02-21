@@ -1,4 +1,4 @@
-eal-Time Chat App (StateleSSE)
+Real-Time Chat App (StateleSSE)
 
 A real-time multi-room chat application built with ASP.NET Core, PostgreSQL, Redis, SSE and React (Vite + TypeScript).
 
